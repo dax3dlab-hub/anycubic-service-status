@@ -9,8 +9,26 @@ const port = Number(process.env.PORT || 8181);
 const host = process.env.HOST || "0.0.0.0";
 const publicDir = path.join(__dirname, "public");
 const historyDepth = 24;
+const alertFeedDepth = 20;
+const monitorIntervalMs = Number(process.env.MONITOR_INTERVAL_MS || 60000);
 const serverStart = Date.now();
 const checkHistory = new Map();
+const serviceState = new Map();
+const lastAlertAt = new Map();
+const alertFeed = [];
+
+const alertConfig = {
+  webhookUrl: process.env.ALERT_WEBHOOK_URL || "",
+  webhookFormat: (process.env.ALERT_WEBHOOK_FORMAT || "generic").toLowerCase(),
+  cooldownMs: Number(process.env.ALERT_COOLDOWN_SECONDS || 900) * 1000,
+  minimumState: process.env.ALERT_MINIMUM_STATE || "degraded",
+};
+
+const severityRank = {
+  operational: 0,
+  degraded: 1,
+  outage: 2,
+};
 
 const services = [
   {
@@ -80,8 +98,203 @@ const services = [
   },
 ];
 
+let latestPayload = null;
+let monitorInFlight = null;
+
 function toMs(start) {
   return Math.max(0, Math.round(performance.now() - start));
+}
+
+function addAlertFeedEntry(entry) {
+  alertFeed.unshift(entry);
+  if (alertFeed.length > alertFeedDepth) {
+    alertFeed.length = alertFeedDepth;
+  }
+}
+
+function shouldAlertForState(state) {
+  return severityRank[state] >= severityRank[alertConfig.minimumState];
+}
+
+function makeAlertTitle(snapshot, nextState, previousState) {
+  if (nextState === "operational") {
+    return `${snapshot.name} recuperou`;
+  }
+  if (!previousState || previousState === "operational") {
+    return `${snapshot.name} entrou em alerta`;
+  }
+  return `${snapshot.name} mudou para ${nextState}`;
+}
+
+function makeAlertText(snapshot, nextState, previousState) {
+  const details = snapshot.type === "tcp" ? snapshot.probe.detail : `${snapshot.probe.detail} | DNS ${snapshot.dns.latencyMs} ms`;
+  return [
+    `${makeAlertTitle(snapshot, nextState, previousState)}`,
+    `Estado anterior: ${previousState || "desconhecido"}`,
+    `Estado atual: ${nextState}`,
+    `Host: ${snapshot.host}`,
+    `Latencia: ${snapshot.latencyMs} ms`,
+    `Detalhes: ${details}`,
+    `Horario: ${snapshot.checkedAt}`,
+  ].join("\n");
+}
+
+function buildWebhookRequest(snapshot, nextState, previousState) {
+  const text = makeAlertText(snapshot, nextState, previousState);
+  const title = makeAlertTitle(snapshot, nextState, previousState);
+  const payload = {
+    service: snapshot.name,
+    serviceId: snapshot.id,
+    host: snapshot.host,
+    category: snapshot.category,
+    state: nextState,
+    previousState: previousState || null,
+    latencyMs: snapshot.latencyMs,
+    checkedAt: snapshot.checkedAt,
+    details: {
+      dns: snapshot.dns,
+      probe: snapshot.probe,
+    },
+    text,
+    title,
+  };
+
+  switch (alertConfig.webhookFormat) {
+    case "discord":
+      return {
+        body: JSON.stringify({
+          content: `**${title}**\n${text}`,
+        }),
+        headers: { "Content-Type": "application/json" },
+      };
+    case "slack":
+      return {
+        body: JSON.stringify({
+          text: `*${title}*\n${text}`,
+        }),
+        headers: { "Content-Type": "application/json" },
+      };
+    case "ntfy":
+      return {
+        body: text,
+        headers: {
+          "Content-Type": "text/plain; charset=utf-8",
+          Title: title,
+          Priority: nextState === "outage" ? "urgent" : "default",
+        },
+      };
+    default:
+      return {
+        body: JSON.stringify(payload),
+        headers: { "Content-Type": "application/json" },
+      };
+  }
+}
+
+function postWebhook(url, requestBody, headers) {
+  return new Promise((resolve, reject) => {
+    const target = new URL(url);
+    const transport = target.protocol === "https:" ? https : http;
+    const request = transport.request(
+      {
+        protocol: target.protocol,
+        hostname: target.hostname,
+        port: target.port,
+        path: `${target.pathname}${target.search}`,
+        method: "POST",
+        headers: {
+          "Content-Length": Buffer.byteLength(requestBody),
+          ...headers,
+        },
+        timeout: 10000,
+      },
+      (response) => {
+        response.resume();
+        resolve(response.statusCode || 0);
+      },
+    );
+
+    request.on("timeout", () => {
+      request.destroy(new Error("Timeout ao enviar webhook."));
+    });
+    request.on("error", reject);
+    request.write(requestBody);
+    request.end();
+  });
+}
+
+async function sendExternalAlert(snapshot, nextState, previousState) {
+  if (!alertConfig.webhookUrl) {
+    return { sent: false, reason: "webhook-disabled" };
+  }
+
+  const lastSentAt = lastAlertAt.get(snapshot.id) || 0;
+  if (Date.now() - lastSentAt < alertConfig.cooldownMs && nextState !== "operational") {
+    return { sent: false, reason: "cooldown-active" };
+  }
+
+  const request = buildWebhookRequest(snapshot, nextState, previousState);
+  const statusCode = await postWebhook(alertConfig.webhookUrl, request.body, request.headers);
+  lastAlertAt.set(snapshot.id, Date.now());
+  return { sent: true, statusCode };
+}
+
+async function evaluateAlerts(snapshots) {
+  for (const snapshot of snapshots) {
+    const previousState = serviceState.get(snapshot.id);
+    const nextState = snapshot.state;
+    const changed = previousState && previousState !== nextState;
+    const firstDetection = !previousState && shouldAlertForState(nextState);
+    const recovered = previousState && previousState !== "operational" && nextState === "operational";
+    const worsened = changed && shouldAlertForState(nextState);
+
+    serviceState.set(snapshot.id, nextState);
+
+    if (!firstDetection && !recovered && !worsened) {
+      continue;
+    }
+
+    const eventType = nextState === "operational" ? "recovery" : "incident";
+    const feedEntry = {
+      id: `${snapshot.id}-${snapshot.checkedAt}-${eventType}`,
+      serviceId: snapshot.id,
+      serviceName: snapshot.name,
+      state: nextState,
+      previousState: previousState || null,
+      eventType,
+      checkedAt: snapshot.checkedAt,
+      host: snapshot.host,
+      latencyMs: snapshot.latencyMs,
+      message: makeAlertTitle(snapshot, nextState, previousState),
+      delivery: {
+        configured: Boolean(alertConfig.webhookUrl),
+        sent: false,
+        statusCode: null,
+        reason: alertConfig.webhookUrl ? "pending" : "webhook-disabled",
+      },
+    };
+
+    try {
+      if (recovered || shouldAlertForState(nextState)) {
+        const delivery = await sendExternalAlert(snapshot, nextState, previousState);
+        feedEntry.delivery = {
+          configured: Boolean(alertConfig.webhookUrl),
+          sent: delivery.sent,
+          statusCode: delivery.statusCode || null,
+          reason: delivery.reason || "sent",
+        };
+      }
+    } catch (error) {
+      feedEntry.delivery = {
+        configured: Boolean(alertConfig.webhookUrl),
+        sent: false,
+        statusCode: null,
+        reason: error.message,
+      };
+    }
+
+    addAlertFeedEntry(feedEntry);
+  }
 }
 
 async function resolveServiceDns(service) {
@@ -131,7 +344,7 @@ function probeHttps(service) {
       resolve({
         ok: false,
         latencyMs: toMs(start),
-        detail: error.message,
+        detail: error.message || "Falha na requisicao HTTPS.",
       });
     });
 
@@ -166,7 +379,7 @@ function probeTcp(service) {
       resolve({
         ok: false,
         latencyMs: toMs(start),
-        detail: error.message,
+        detail: error.message || "Falha na conexao TCP.",
       });
     });
   });
@@ -176,7 +389,6 @@ async function getServiceSnapshot(service) {
   const checkedAt = new Date().toISOString();
   const dnsResult = await resolveServiceDns(service);
   const probeResult = service.type === "tcp" ? await probeTcp(service) : await probeHttps(service);
-
   const state = dnsResult.ok && probeResult.ok ? "operational" : dnsResult.ok || probeResult.ok ? "degraded" : "outage";
   const latencyMs = probeResult.latencyMs || dnsResult.latencyMs;
 
@@ -198,12 +410,10 @@ async function getServiceSnapshot(service) {
   };
 }
 
-async function getStatusPayload() {
-  const snapshots = await Promise.all(services.map(getServiceSnapshot));
+function buildPayload(snapshots) {
   const operational = snapshots.filter((item) => item.state === "operational").length;
   const degraded = snapshots.filter((item) => item.state === "degraded").length;
   const outage = snapshots.filter((item) => item.state === "outage").length;
-
   const overall = outage > 0 ? "major-outage" : degraded > 0 ? "degraded-performance" : "all-systems-operational";
   const avgLatencyMs = snapshots.length
     ? Math.round(snapshots.reduce((sum, item) => sum + item.latencyMs, 0) / snapshots.length)
@@ -214,6 +424,14 @@ async function getStatusPayload() {
     monitoringWindow: historyDepth,
     overall,
     services: snapshots,
+    alerts: {
+      configured: Boolean(alertConfig.webhookUrl),
+      webhookFormat: alertConfig.webhookFormat,
+      minimumState: alertConfig.minimumState,
+      cooldownSeconds: Math.round(alertConfig.cooldownMs / 1000),
+      monitorIntervalSeconds: Math.round(monitorIntervalMs / 1000),
+      recent: alertFeed,
+    },
     summary: {
       total: snapshots.length,
       operational,
@@ -223,6 +441,37 @@ async function getStatusPayload() {
       uptimeSeconds: Math.round((Date.now() - serverStart) / 1000),
     },
   };
+}
+
+async function runMonitorCycle() {
+  if (monitorInFlight) {
+    return monitorInFlight;
+  }
+
+  monitorInFlight = (async () => {
+    const snapshots = await Promise.all(services.map(getServiceSnapshot));
+    await evaluateAlerts(snapshots);
+    latestPayload = buildPayload(snapshots);
+    return latestPayload;
+  })();
+
+  try {
+    return await monitorInFlight;
+  } finally {
+    monitorInFlight = null;
+  }
+}
+
+function scheduleMonitoring() {
+  void runMonitorCycle().catch((error) => {
+    console.error("Initial monitor cycle failed:", error.message);
+  });
+
+  setInterval(() => {
+    void runMonitorCycle().catch((error) => {
+      console.error("Monitor cycle failed:", error.message);
+    });
+  }, monitorIntervalMs);
 }
 
 function getContentType(filePath) {
@@ -267,6 +516,8 @@ function sendFile(response, filePath) {
   });
 }
 
+scheduleMonitoring();
+
 const server = http.createServer(async (request, response) => {
   const url = new URL(request.url, `http://${request.headers.host}`);
   if (url.pathname === "/health") {
@@ -275,13 +526,14 @@ const server = http.createServer(async (request, response) => {
       uptimeSeconds: Math.round((Date.now() - serverStart) / 1000),
       serviceCount: services.length,
       timestamp: new Date().toISOString(),
+      alertsConfigured: Boolean(alertConfig.webhookUrl),
     });
     return;
   }
 
   if (url.pathname === "/api/status") {
     try {
-      const payload = await getStatusPayload();
+      const payload = latestPayload || (await runMonitorCycle());
       sendJson(response, payload);
     } catch (error) {
       response.writeHead(500, { "Content-Type": "application/json; charset=utf-8" });

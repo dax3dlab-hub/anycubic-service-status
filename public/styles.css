@@ -167,7 +167,9 @@ h1 {
 
 .meta-grid,
 .summary-strip,
-.service-grid {
+.service-grid,
+.alert-feed,
+.alerts-config {
   display: grid;
 }
 
@@ -203,6 +205,81 @@ h1 {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 14px;
   margin: 26px 0 34px;
+}
+
+.alerts-panel {
+  margin-bottom: 34px;
+  padding: 22px;
+  border: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.03));
+}
+
+.alerts-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: flex-end;
+  margin-bottom: 18px;
+}
+
+.alerts-head h2 {
+  font-size: clamp(1.5rem, 3vw, 2.4rem);
+}
+
+.alerts-config {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  min-width: min(100%, 560px);
+}
+
+.alert-config-card,
+.alert-card {
+  padding: 14px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.alert-config-card span,
+.alert-card p,
+.alert-meta,
+.alert-delivery {
+  color: var(--muted);
+}
+
+.alert-config-card strong {
+  display: block;
+  margin-top: 6px;
+}
+
+.alert-feed {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.alert-card {
+  min-height: 146px;
+  display: grid;
+  gap: 12px;
+}
+
+.alert-card h3 {
+  font-size: 1rem;
+}
+
+.alert-card p {
+  line-height: 1.45;
+}
+
+.alert-card-empty {
+  grid-column: 1 / -1;
+}
+
+.alert-topline,
+.alert-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
 }
 
 .summary-card {
@@ -385,11 +462,14 @@ h1 {
 @media (max-width: 900px) {
   .hero,
   .service-grid,
-  .summary-strip {
+  .summary-strip,
+  .alert-feed,
+  .alerts-config {
     grid-template-columns: 1fr;
   }
 
-  .section-head {
+  .section-head,
+  .alerts-head {
     align-items: stretch;
     flex-direction: column;
   }

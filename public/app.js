@@ -78,7 +78,13 @@ function renderSummary(payload) {
 }
 
 function renderAlerts(payload) {
-  const config = payload.alerts;
+  const config = payload.alerts || {
+    configured: false,
+    webhookFormat: "generic",
+    monitorIntervalSeconds: 60,
+    cooldownSeconds: 900,
+    recent: [],
+  };
   alertsConfig.innerHTML = `
     <div class="alert-config-card">
       <span>Webhook</span>

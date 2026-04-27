@@ -24,6 +24,18 @@ Depois abra:
 4. Garanta que a plataforma exponha a variavel `PORT`.
 5. A aplicacao respondera em `/` e o healthcheck em `/health`.
 
+#### Variaveis para alertas externos
+
+Configure no painel do Render:
+
+- `ALERT_WEBHOOK_URL`: URL do webhook que recebera os incidentes
+- `ALERT_WEBHOOK_FORMAT`: `generic`, `slack`, `discord` ou `ntfy`
+- `ALERT_MINIMUM_STATE`: `degraded` ou `outage`
+- `ALERT_COOLDOWN_SECONDS`: intervalo minimo entre alertas repetidos do mesmo servico
+- `MONITOR_INTERVAL_MS`: intervalo entre verificacoes do monitor em background
+
+Com isso, o monitor passa a rodar sozinho no servidor e envia notificacoes quando um servico piora ou quando se recupera.
+
 O projeto ja inclui [`render.yaml`](C:/Users/Aline/Documents/Codex/2026-04-27/criar-uma-p-gina-de-status/render.yaml) e [`package.json`](C:/Users/Aline/Documents/Codex/2026-04-27/criar-uma-p-gina-de-status/package.json), entao o deploy fica direto.
 
 ### Railway
@@ -45,6 +57,8 @@ O projeto ja inclui [`render.yaml`](C:/Users/Aline/Documents/Codex/2026-04-27/cr
 
 - Backend local em Node.js servindo a interface e a API `/api/status`
 - Endpoint de healthcheck em `/health`
+- Monitor em background independente de visitantes
 - Verificacoes periodicas de DNS, HTTPS e TCP
+- Webhook externo para incidentes e recuperacoes
 - Historico curto por servico para visualizar degradacao e quedas
 - Filtros por categoria, refresh manual e auto-refresh
