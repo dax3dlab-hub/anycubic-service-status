@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Anycubic Service Status</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Anycubic + Makeronline</p>
+          <h1>Service Status Console</h1>
+          <p class="hero-text">
+            Painel local para acompanhar em tempo real a saude dos servicos web, nuvem e comunicacao MQTT.
+          </p>
+        </div>
+
+        <div class="hero-panel">
+          <div class="overall-status" id="overallStatus">
+            <span class="status-dot"></span>
+            <div>
+              <strong id="overallLabel">Carregando...</strong>
+              <p id="overallDescription">Consultando os endpoints monitorados.</p>
+            </div>
+          </div>
+
+          <div class="controls">
+            <button id="refreshButton" class="action-button" type="button">Atualizar agora</button>
+            <label class="auto-toggle">
+              <input id="autoRefreshToggle" type="checkbox" checked />
+              <span>Auto-refresh</span>
+            </label>
+          </div>
+
+          <div class="meta-grid">
+            <div>
+              <span>Ultima leitura</span>
+              <strong id="lastUpdated">-</strong>
+            </div>
+            <div>
+              <span>Ciclo</span>
+              <strong>15s</strong>
+            </div>
+            <div>
+              <span>Janela</span>
+              <strong id="historyWindow">-</strong>
+            </div>
+            <div>
+              <span>Backend</span>
+              <strong>PowerShell local</strong>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main>
+        <section class="summary-strip" id="summaryStrip"></section>
+
+        <section class="section-head">
+          <div>
+            <p class="eyebrow">Servicos monitorados</p>
+            <h2>Visao detalhada</h2>
+          </div>
+
+          <div class="filter-pills" id="filterPills"></div>
+        </section>
+
+        <section class="service-grid" id="serviceGrid"></section>
+      </main>
+    </div>
+
+    <template id="serviceCardTemplate">
+      <article class="service-card">
+        <div class="card-topline">
+          <span class="category-tag"></span>
+          <span class="state-pill"></span>
+        </div>
+
+        <div class="card-header">
+          <div>
+            <h3 class="service-name"></h3>
+            <p class="service-description"></p>
+          </div>
+          <div class="latency-badge"></div>
+        </div>
+
+        <dl class="service-meta">
+          <div>
+            <dt>Host</dt>
+            <dd class="host"></dd>
+          </div>
+          <div>
+            <dt>IP esperado</dt>
+            <dd class="ip"></dd>
+          </div>
+          <div>
+            <dt>DNS</dt>
+            <dd class="dns"></dd>
+          </div>
+          <div>
+            <dt>Sonda</dt>
+            <dd class="probe"></dd>
+          </div>
+        </dl>
+
+        <div class="history-block">
+          <div class="history-head">
+            <span>Historico recente</span>
+            <strong class="checked-at"></strong>
+          </div>
+          <div class="history-bar"></div>
+        </div>
+      </article>
+    </template>
+
+    <script src="/app.js" defer></script>
+  </body>
+  </html>
