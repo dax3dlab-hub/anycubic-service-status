@@ -28,6 +28,8 @@ const serviceGrid = document.querySelector("#serviceGrid");
 const summaryStrip = document.querySelector("#summaryStrip");
 const filterPills = document.querySelector("#filterPills");
 const template = document.querySelector("#serviceCardTemplate");
+const alertFeed = document.querySelector("#alertFeed");
+const alertsConfig = document.querySelector("#alertsConfig");
 
 const overallStatus = document.querySelector("#overallStatus");
 const overallLabel = document.querySelector("#overallLabel");
@@ -72,6 +74,60 @@ function renderSummary(payload) {
         </article>
       `,
     )
+    .join("");
+}
+
+function renderAlerts(payload) {
+  const config = payload.alerts;
+  alertsConfig.innerHTML = `
+    <div class="alert-config-card">
+      <span>Webhook</span>
+      <strong>${config.configured ? "Configurado" : "Nao configurado"}</strong>
+    </div>
+    <div class="alert-config-card">
+      <span>Formato</span>
+      <strong>${escapeHtml(config.webhookFormat)}</strong>
+    </div>
+    <div class="alert-config-card">
+      <span>Ciclo do monitor</span>
+      <strong>${config.monitorIntervalSeconds}s</strong>
+    </div>
+    <div class="alert-config-card">
+      <span>Cooldown</span>
+      <strong>${config.cooldownSeconds}s</strong>
+    </div>
+  `;
+
+  if (!config.recent.length) {
+    alertFeed.innerHTML = `
+      <article class="alert-card alert-card-empty">
+        <strong>Nenhum alerta recente</strong>
+        <p>Quando um servico piorar ou recuperar, o evento aparece aqui e pode ser enviado para o webhook configurado.</p>
+      </article>
+    `;
+    return;
+  }
+
+  alertFeed.innerHTML = config.recent
+    .map((entry) => {
+      const delivery = entry.delivery.sent
+        ? `Enviado (${entry.delivery.statusCode ?? "-"})`
+        : entry.delivery.reason;
+      return `
+        <article class="alert-card">
+          <div class="alert-topline">
+            <span class="state-pill state-${escapeHtml(entry.state)}">${escapeHtml(stateLabels[entry.state] || entry.state)}</span>
+            <span class="alert-delivery">${escapeHtml(delivery)}</span>
+          </div>
+          <h3>${escapeHtml(entry.message)}</h3>
+          <p>${escapeHtml(entry.serviceName)} • ${escapeHtml(entry.host)}</p>
+          <div class="alert-meta">
+            <span>${escapeHtml(formatDate(entry.checkedAt))}</span>
+            <span>${escapeHtml(`${entry.latencyMs} ms`)}</span>
+          </div>
+        </article>
+      `;
+    })
     .join("");
 }
 
@@ -165,6 +221,7 @@ async function loadStatus() {
 
     renderOverall(payload);
     renderSummary(payload);
+    renderAlerts(payload);
     renderFilters(payload);
     renderServices(payload);
   } catch (error) {
